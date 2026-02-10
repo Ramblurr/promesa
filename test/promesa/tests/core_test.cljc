@@ -17,7 +17,7 @@
   (t/is (false? (p/promise? {})))
   (t/is (false? (p/promise? nil)))
   (t/is (p/promise? (pt/-promise nil)))
-  (t/is (false? (p/promise? #?(:cljs #js {} :clj (Object.)))))
+  (t/is (false? (p/promise? #?(:cljd {} :cljs #js {} :clj (Object.)))))
   (t/is (false? (p/promise? [])))
   (t/is (false? (p/promise? #{})))
   (t/is (true? (p/promise? (p/promise nil))))
@@ -32,7 +32,8 @@
     (t/is (p/promise? d))
     (t/is (p/deferred? d))
     (t/is (p/pending? d))
-    (t/is (nil? #?(:clj (deref d 200 nil)
+    (t/is (nil? #?(:cljd (deref d)
+                   :clj (deref d 200 nil)
                    :cljs (deref d)))))
 
   (let [d (p/deferred)]
@@ -199,22 +200,24 @@
                          (done)))))))
 
 
-(t/deftest hmap-with-wrapped-exception
-  (let [p1 (->> (p/promise 1)
-                (p/hmap (fn [v c]
-                          (p/rejected (ex-info "foobar" {}))))
-                (p/mcat identity)
-                (p/merr (fn [cause]
-                          (p/resolved (ex-message cause)))))]
+#?(:cljd nil
+   :default
+   (t/deftest hmap-with-wrapped-exception
+     (let [p1 (->> (p/promise 1)
+                   (p/hmap (fn [v c]
+                             (p/rejected (ex-info "foobar" {}))))
+                   (p/mcat identity)
+                   (p/merr (fn [cause]
+                             (p/resolved (ex-message cause)))))]
 
-    #?(:clj
-       (t/is (= "foobar" @p1))
-       :cljs
-       (t/async done
-         (p/finally p1 (fn [v c]
-                         (t/is (nil? c))
-                         (t/is (= "foobar" v))
-                         (done)))))))
+       #?(:clj
+          (t/is (= "foobar" @p1))
+          :cljs
+          (t/async done
+            (p/finally p1 (fn [v c]
+                            (t/is (nil? c))
+                            (t/is (= "foobar" v))
+                            (done))))))))
 
 (t/deftest with-dispatch-with-plain-value
   (let [p1 (px/with-dispatch :default
@@ -296,23 +299,25 @@
                          (done)))))))
 
 
-(t/deftest promise-from-factory-reject
-  (let [p1 (p/create (fn [_ reject] (reject (ex-info "foobar" {}))))]
-    #?(:clj
-       (let [v1 (p/await p1)]
-         (t/is (p/rejected? p1))
-         (t/is (pu/execution-exception? v1))
-         (t/is (= "clojure.lang.ExceptionInfo: foobar {}" (ex-message v1)))
-         (t/is (= "foobar" (ex-message (ex-cause v1)))))
-       :cljs
-       (t/async done
-         (p/finally p1 (fn [v c]
-                         (t/is (nil? v))
-                         (t/is (instance? cljs.core.ExceptionInfo c))
-                         (t/is (instance? js/Error c))
-                         (t/is (p/rejected? p1))
-                         (t/is (= "foobar" (ex-message c)))
-                         (done)))))))
+#?(:cljd nil
+   :default
+   (t/deftest promise-from-factory-reject
+     (let [p1 (p/create (fn [_ reject] (reject (ex-info "foobar" {}))))]
+       #?(:clj
+          (let [v1 (p/await p1)]
+            (t/is (p/rejected? p1))
+            (t/is (pu/execution-exception? v1))
+            (t/is (= "clojure.lang.ExceptionInfo: foobar {}" (ex-message v1)))
+            (t/is (= "foobar" (ex-message (ex-cause v1)))))
+          :cljs
+          (t/async done
+            (p/finally p1 (fn [v c]
+                            (t/is (nil? v))
+                            (t/is (instance? cljs.core.ExceptionInfo c))
+                            (t/is (instance? js/Error c))
+                            (t/is (p/rejected? p1))
+                            (t/is (= "foobar" (ex-message c)))
+                            (done))))))))
 
 (t/deftest promise-from-async-factory
   (let [p1 (p/create (fn [resolve _]
@@ -632,22 +637,24 @@
 
 ;; --- Do Expression tests
 
-(t/deftest do-expression
-  (let [err (ex-info "error" {})
-        p2  (p/do! (promise-ko 10 :ko))
-        p3  (p/do! (promise-ok 10 :ok1)
-                   (promise-ok 10 :ok2))]
-    #?(:clj
-       (do
-         @(p/wait-all p2 p3)
-         (t/is (p/rejected? p2))
-         (t/is (p/resolved? p3)))
+#?(:cljd nil
+   :default
+   (t/deftest do-expression
+     (let [err (ex-info "error" {})
+           p2  (p/do! (promise-ko 10 :ko))
+           p3  (p/do! (promise-ok 10 :ok1)
+                      (promise-ok 10 :ok2))]
+       #?(:clj
+          (do
+            @(p/wait-all p2 p3)
+            (t/is (p/rejected? p2))
+            (t/is (p/resolved? p3)))
 
-       :cljs
-       (->> (p/wait-all p2 p3)
-            (p/fnly (fn [_ _]
-                      (t/is (p/rejected? p2))
-                      (t/is (p/resolved? p3))))))))
+          :cljs
+          (->> (p/wait-all p2 p3)
+               (p/fnly (fn [_ _]
+                         (t/is (p/rejected? p2))
+                         (t/is (p/resolved? p3)))))))))
 
 (t/deftest run-helper
   (let [s (atom [])
@@ -753,21 +760,22 @@
                          (done)))))))
 
 
-(t/deftest thread-as-last-macro
-  (let [p1 (p/as-> (p/future [1 2 3]) <>
-             (reduce + 8 <>)
-             (/ <> 2)
-             (future-inc <>))]
+#?(:cljd nil
+   :default
+   (t/deftest thread-as-last-macro
+     (let [p1 (p/as-> (p/future [1 2 3]) <>
+                (reduce + 8 <>)
+                (/ <> 2)
+                (future-inc <>))]
+       #?(:clj
+          (t/is (= 8 @p1))
 
-    #?(:clj
-       (t/is (= 8 @p1))
-
-       :cljs
-       (t/async done
-         (p/finally p1 (fn [v c]
-                         (t/is (nil? c))
-                         (t/is (= 8 v))
-                         (done)))))))
+          :cljs
+          (t/async done
+            (p/finally p1 (fn [v c]
+                            (t/is (nil? c))
+                            (t/is (= 8 v))
+                            (done))))))))
 
 ;; Create some test variables and a test fn
 ;; These must be defined here as locals do not work
@@ -777,29 +785,31 @@
   []
   (p/resolved "original"))
 
-(t/deftest with-redefs-macro
-  (let [original-fn redefs-async-fn
-        p1 (p/with-redefs [redefs-async-fn  (fn [] (p/resolved "mocked"))
-                           redefs-var :mocked]
-             (p/then (redefs-async-fn)
-                     (fn [v]
-                       ;; NOTE: this value is unused - should it be removed?
-                       ;; Reported by clj-kondo
-                       (not= redefs-async-fn original-fn)
-                       [v redefs-var])))]
+#?(:cljd nil
+   :default
+   (t/deftest with-redefs-macro
+     (let [original-fn redefs-async-fn
+           p1 (p/with-redefs [redefs-async-fn  (fn [] (p/resolved "mocked"))
+                              redefs-var :mocked]
+                (p/then (redefs-async-fn)
+                        (fn [v]
+                          ;; NOTE: this value is unused - should it be removed?
+                          ;; Reported by clj-kondo
+                          (not= redefs-async-fn original-fn)
+                          [v redefs-var])))]
 
-    #?(:clj
-       (let [res @p1]
-         (t/is (= res ["mocked" :mocked]))
-         (t/is (= redefs-async-fn original-fn)))
+       #?(:clj
+          (let [res @p1]
+            (t/is (= res ["mocked" :mocked]))
+            (t/is (= redefs-async-fn original-fn)))
 
-       :cljs
-       (t/async done
-         (p/finally p1 (fn [v c]
-                         (t/is (= v ["mocked" :mocked]))
-                         (t/is (= redefs-async-fn original-fn))
-                         (t/is (nil? c))
-                         (done)))))))
+          :cljs
+          (t/async done
+            (p/finally p1 (fn [v c]
+                            (t/is (= v ["mocked" :mocked]))
+                            (t/is (= redefs-async-fn original-fn))
+                            (t/is (nil? c))
+                            (done))))))))
 
 (t/deftest doseq-test
   (let [s (atom [])
@@ -851,7 +861,8 @@
        (p/finally p (fn [v c]
                       (t/is (nil? c)))))))
 
-#?(:bb nil
+#?(:cljd nil
+   :bb nil
    :clj
    (t/deftest let-syntax-test
      (t/is (thrown? clojure.lang.Compiler$CompilerException

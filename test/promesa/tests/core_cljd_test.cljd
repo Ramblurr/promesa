@@ -1,0 +1,30 @@
+(ns promesa.tests.core-cljd-test
+  {:no-dynamic true}
+  (:require [cljd.test :as t]
+            [promesa.core :as p]))
+
+(defn await-settle [pr]
+  (future
+    (await (Future.delayed (Duration .milliseconds 40)))
+    (if (p/rejected? pr)
+      (throw (p/extract pr))
+      (p/extract pr))))
+
+(t/deftest resolved-chain
+  (future
+    (let [pr (p/chain (p/resolved 1) inc #(+ % 10))
+          v (await (await-settle pr))]
+      (t/is (= 12 v)))))
+
+(t/deftest rejection-catch
+  (future
+    (let [pr (p/catch (p/rejected (ex-info "boom" {}))
+                      (fn [_] :handled))
+          v (await (await-settle pr))]
+      (t/is (= :handled v)))))
+
+(t/deftest all-values
+  (future
+    (let [all-pr (p/all [(p/resolved 1) (p/resolved 2)])
+          allv (await (await-settle all-pr))]
+      (t/is (= [1 2] allv)))))

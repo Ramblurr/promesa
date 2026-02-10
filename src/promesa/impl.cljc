@@ -6,14 +6,16 @@
 
 (ns ^:no-doc promesa.impl
   "Implementation of promise protocols."
+  {:no-dynamic true}
   (:require
-   [clojure.core :as c]
    [promesa.protocols :as pt]
    [promesa.util :as pu]
-   [promesa.exec :as exec]
+   #?(:cljd nil :cljs [promesa.exec :as exec] :clj [promesa.exec :as exec])
+   #?(:cljd ["dart:async" :as da])
    #?(:cljs [promesa.impl.promise :as impl]))
 
-  #?(:clj
+  #?(:cljd nil
+     :clj
      (:import
       java.time.Duration
       java.util.concurrent.CompletableFuture
@@ -31,7 +33,7 @@
 
 ;; --- Global Constants
 
-#?(:clj (set! *warn-on-reflection* true))
+#?(:cljd nil :clj (set! *warn-on-reflection* true))
 
 (defn promise?
   "Return true if `v` is a promise instance."
@@ -42,6 +44,10 @@
 
      :cljs
      (or (impl/isThenable v)
+         (satisfies? pt/IPromise v))
+
+     :cljd
+     (or (dart/is? v da/Future)
          (satisfies? pt/IPromise v))))
 
 (defn deferred?
@@ -51,28 +57,66 @@
 
 (defn resolved
   [v]
-  #?(:cljs (impl/resolved v)
+  #?(:cljd (let [d (deferred)]
+             (pt/-resolve! d v)
+             d)
+     :cljs (impl/resolved v)
      :clj (CompletableFuture/completedFuture v)))
 
 (defn rejected
   [v]
-  #?(:cljs (impl/rejected v)
+  #?(:cljd (let [d (deferred)]
+             (pt/-reject! d v)
+             d)
+     :cljs (impl/rejected v)
      :clj (let [p (CompletableFuture.)]
             (.completeExceptionally ^CompletableFuture p v)
             p)))
 
 (defn coerce
   [v]
-  #?(:clj
-     (if (promise? v)
-       v
-       (resolved v))
-     :cljs
-     (impl/coerce v)))
+  #?(:cljd (if (promise? v)
+              (pt/-promise v)
+              (resolved v))
+     :clj  (if (promise? v)
+             v
+             (resolved v))
+     :cljs (impl/coerce v)))
+
+#?(:cljd
+   (defn- ->dart-future
+     [x]
+     (cond
+       (dart/is? x da/Future)
+       x
+
+       :else
+       (let [p (pt/-promise x)]
+         (cond
+           (dart/is? p da/Future)
+           p
+
+           (satisfies? pt/IPromise p)
+           (let [c (da/Completer)]
+             (pt/-hmap p
+                       (fn [v e]
+                         (if e
+                           (do
+                             (.completeError c e)
+                             nil)
+                           (do
+                             (.complete c v)
+                             nil))))
+             (.-future c))
+
+           :else
+           (da/Future.value p))))))
 
 (defn all
   [promises]
-  #?(:cljs (-> (impl/all (into-array promises))
+  #?(:cljd (-> (da/Future.wait (mapv ->dart-future promises))
+               (pt/-fmap vec))
+     :cljs (-> (impl/all (into-array promises))
                (pt/-fmap vec))
      :clj (let [promises (map pt/-promise promises)]
             (-> (CompletableFuture/allOf (into-array CompletableFuture promises))
@@ -80,14 +124,98 @@
 
 (defn race
   [promises]
-  #?(:cljs (impl/race (into-array (map pt/-promise promises)))
+  #?(:cljd (da/Future.any (mapv ->dart-future promises))
+     :cljs (impl/race (into-array (map pt/-promise promises)))
      :clj (CompletableFuture/anyOf (into-array CompletableFuture (map pt/-promise promises)))))
 
 ;; --- Promise Impl
 
+#?(:cljd
+   (do
+     (defn- forward-result! [target result-p]
+       (pt/-hmap result-p (fn [v e] (if e (pt/-reject! target e) (pt/-resolve! target v)))))
+
+     (deftype DeferredImpl [^da/Completer completer state value]
+       pt/IPromiseFactory
+       (-promise [it] it)
+
+       pt/IPromise
+       (-fmap [it f]
+         (let [d (deferred)]
+           (-> (.-future completer)
+               (.then (fn [v] (pt/-resolve! d (f v))))
+               (.catchError (fn [e] (pt/-reject! d e))))
+           d))
+       (-fmap [it f _] (pt/-fmap it f))
+
+       (-mcat [it f]
+         (let [d (deferred)]
+           (-> (.-future completer)
+               (.then (fn [v] (forward-result! d (pt/-promise (f v)))))
+               (.catchError (fn [e] (pt/-reject! d e))))
+           d))
+       (-mcat [it f _] (pt/-mcat it f))
+
+       (-hmap [it f]
+         (let [d (deferred)]
+           (-> (.-future completer)
+               (.then (fn [v] (pt/-resolve! d (f v nil))))
+               (.catchError (fn [e] (pt/-resolve! d (f nil e)))))
+           d))
+       (-hmap [it f _] (pt/-hmap it f))
+
+       (-merr [it f]
+         (let [d (deferred)]
+           (-> (.-future completer)
+               (.then (fn [v] (pt/-resolve! d v)))
+               (.catchError (fn [e] (forward-result! d (pt/-promise (f e))))))
+           d))
+       (-merr [it f _] (pt/-merr it f))
+
+       (-fnly [it f]
+         (-> (.-future completer)
+             (.then (fn [v] (f v nil)))
+             (.catchError (fn [e] (f nil e))))
+         it)
+       (-fnly [it f _] (pt/-fnly it f))
+
+       (-then [it f] (pt/-mcat it (fn [v] (coerce (f v)))))
+       (-then [it f _] (pt/-then it f))
+
+       pt/ICompletable
+       (-resolve! [_ v]
+         (when (= @state ::pending)
+           (reset! state ::resolved)
+           (reset! value v)
+           (.complete ^da/Completer completer v)))
+       (-reject! [_ e]
+         (when (= @state ::pending)
+           (reset! state ::rejected)
+           (reset! value e)
+           (.completeError ^da/Completer completer e)))
+
+       pt/ICancellable
+       (-cancel! [it]
+         (pt/-reject! it (ex-info "promise cancelled" {})))
+       (-cancelled? [_] false)
+
+       clojure.core/IDeref
+       (-deref [_]
+         (if (= @state ::rejected)
+           (throw @value)
+           @value))
+
+       pt/IState
+       (-extract [_] @value)
+       (-extract [_ default] (if (= @state ::pending) default @value))
+       (-resolved? [_] (= @state ::resolved))
+       (-rejected? [_] (= @state ::rejected))
+       (-pending? [_] (= @state ::pending)))))
+
 (defn deferred
   []
-  #?(:clj (CompletableFuture.)
+  #?(:cljd (DeferredImpl. (da/Completer) (atom ::pending) (atom nil))
+     :clj (CompletableFuture.)
      :cljs (impl/deferred)))
 
 #?(:cljs
@@ -99,6 +227,35 @@
 
 
 #?(:cljs (extend-promise! js/Promise))
+
+#?(:cljd
+   (extend-type da/Future
+     pt/IPromiseFactory
+     (-promise [p]
+       (let [d (deferred)]
+         (-> p (.then (fn [v] (pt/-resolve! d v))) (.catchError (fn [e] (pt/-reject! d e))))
+         d))
+
+     pt/IPromise
+     (-fmap [it f] (pt/-fmap (pt/-promise it) f))
+     (-fmap [it f executor] (pt/-fmap (pt/-promise it) f executor))
+     (-mcat [it f] (pt/-mcat (pt/-promise it) f))
+     (-mcat [it f executor] (pt/-mcat (pt/-promise it) f executor))
+     (-hmap [it f] (pt/-hmap (pt/-promise it) f))
+     (-hmap [it f executor] (pt/-hmap (pt/-promise it) f executor))
+     (-merr [it f] (pt/-merr (pt/-promise it) f))
+     (-merr [it f executor] (pt/-merr (pt/-promise it) f executor))
+     (-fnly [it f] (pt/-fnly (pt/-promise it) f))
+     (-fnly [it f executor] (pt/-fnly (pt/-promise it) f executor))
+     (-then [it f] (pt/-then (pt/-promise it) f))
+     (-then [it f executor] (pt/-then (pt/-promise it) f executor))
+
+     pt/IState
+     (-extract [_] nil)
+     (-extract [_ default] default)
+     (-resolved? [_] false)
+     (-rejected? [_] false)
+     (-pending? [_] true)))
 
 #?(:cljs
    (extend-type impl/PromiseImpl
@@ -177,7 +334,8 @@
      (pt/-mcat v unwrap executor)
      (pt/-promise v))))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (extend-protocol pt/IPromise
      CompletionStage
      (-fmap
@@ -241,7 +399,8 @@
 
      ))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (extend-type Future
      pt/ICancellable
      (-cancel! [it]
@@ -249,7 +408,8 @@
      (-cancelled? [it]
        (.isCancelled it))))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (extend-type CompletableFuture
      pt/ICancellable
      (-cancel! [it]
@@ -291,7 +451,8 @@
 
 ;; NOTE: still implement for backward compatibility, but is replaced
 ;; with IJoinable protocol internally
-#?(:clj
+#?(:cljd nil
+   :clj
    (extend-protocol pt/IAwaitable
      CompletableFuture
      (-await!
@@ -323,7 +484,8 @@
           (pt/-join it duration)
           (throw (IllegalArgumentException. "IJoinable protocol not implemented")))))))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (extend-protocol pt/IJoinable
      Object
      (-join
@@ -358,7 +520,22 @@
 ;; `then` or `map` over a plain value that can be o can not be a
 ;; promise object
 
-#?(:clj
+#?(:cljd
+   (extend-protocol pt/IPromiseFactory
+     Object
+     (-promise [v]
+       (if (try
+             (some? (ex-data v))
+             (catch dynamic _
+               false))
+         (rejected v)
+         (resolved v)))
+
+     nil
+     (-promise [v]
+       (resolved v)))
+
+   :clj
    (extend-protocol pt/IPromiseFactory
      CompletionStage
      (-promise [cs] cs)
@@ -389,13 +566,13 @@
 
 (defn promise->str
   [p]
-  "#<js/Promise[~]>")
+   #?(:cljd "#<dart/Future[~]>" :default "#<js/Promise[~]>"))
 
 #?(:cljs
    (extend-type js/Promise
      IPrintWithWriter
      (-pr-writer [p writer opts]
-       (-write writer "#<js/Promise[~]>"))))
+       (-write writer  #?(:cljd "#<dart/Future[~]>" :default "#<js/Promise[~]>")))))
 
 #?(:cljs
    (extend-type impl/PromiseImpl

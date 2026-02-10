@@ -1,0 +1,16 @@
+{:paths ["../src" "dev"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.1"}}
+ :aliases
+ {:cljd
+  {:extra-deps {tensegritics/clojuredart
+                {
+                 ;; branch branch: fix/promesa-patches
+                 :git/url "https://github.com/ramblurr/ClojureDart"
+                 :git/sha "79e636ed4e9e8f3b506670048778378d75377edc"}}
+   :main-opts ["-m" "cljd.build"]}
+  :cljd-test
+  {:extra-paths ["../test"]}}
+ :cljd/opts {:kind :dart
+             :main promesa.cljd.main
+             :test-namespaces [promesa.tests.core-test
+                               promesa.tests.core-cljd-test]}}

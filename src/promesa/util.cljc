@@ -5,9 +5,11 @@
 ;; Copyright (c) Andrey Antukh <niwi@niwi.nz>
 
 (ns promesa.util
+  {:no-dynamic true}
   (:refer-clojure :exclude [with-open])
   (:require [promesa.protocols :as pt])
-  #?(:clj
+  #?(:cljd nil
+     :clj
      (:import
       java.lang.reflect.Method
       java.util.concurrent.CancellationException
@@ -18,9 +20,12 @@
       java.util.concurrent.TimeoutException
       java.util.concurrent.locks.ReentrantLock)))
 
-#?(:clj (set! *warn-on-reflection* true))
+#?(:cljd nil :clj (set! *warn-on-reflection* true))
 
-#?(:bb
+#?(:cljd
+   (defn ->Supplier [f]
+     f)
+   :bb
    (defn ->Supplier [f]
      (reify java.util.function.Supplier
        (get [_] (f))))
@@ -29,7 +34,10 @@
      java.util.function.Supplier
      (get [_] (f))))
 
-#?(:bb
+#?(:cljd
+   (defn ->Function [f]
+     f)
+   :bb
    (defn ->Function [f]
      (reify java.util.function.Function
        (apply [_ v]
@@ -40,50 +48,62 @@
      (apply [_ v]
        (f v))))
 
-#?(:clj
-   (def f-identity (->Function identity)))
+(def f-identity
+  #?(:cljd identity
+     :bb (->Function identity)
+     :clj (->Function identity)
+     :cljs identity))
 
-#?(:clj
-   (defn unwrap-completion-stage
-     {:no-doc true}
-     [it]
-     (.thenCompose ^CompletionStage it
-                   ^java.util.function.Function f-identity)))
+(defn unwrap-completion-stage
+  {:no-doc true}
+  [it]
+  #?(:cljd it
+     :cljs it
+     :clj (.thenCompose ^CompletionStage it
+                        ^java.util.function.Function f-identity)))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn completion-exception?
      {:no-doc true}
      [e]
      (instance? CompletionException e)))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn execution-exception?
      {:no-doc true}
      [e]
      (instance? ExecutionException e)))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn cancellation-exception?
      {:no-doc true}
      [e]
      (instance? CancellationException e)))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn timeout-exception?
      {:no-doc true}
      [e]
      (instance? TimeoutException e)))
 
-#?(:clj
-   (defn unwrap-exception
-     "Unwrap CompletionException or ExecutionException"
-     [cause]
-     (if (or (instance? CompletionException cause)
-             (instance? ExecutionException cause))
-       (or (ex-cause cause) cause)
-       cause)))
+(defn unwrap-exception
+  "Unwrap CompletionException or ExecutionException"
+  [cause]
+  #?(:cljd cause
+     :cljs cause
+     :clj (if (or (instance? CompletionException cause)
+                  (instance? ExecutionException cause))
+            (or (ex-cause cause) cause)
+            cause)))
 
-#?(:bb
+#?(:cljd
+   (defn ->Function2 [f]
+     f)
+   :bb
    (defn ->Function2 [f]
      (reify java.util.function.BiFunction
        (apply [_ r e]
@@ -94,7 +114,10 @@
      (apply [_ r e]
        (f r (unwrap-exception e)))))
 
-#?(:bb
+#?(:cljd
+   (defn ->Consumer2 [f]
+     f)
+   :bb
    (defn ->Consumer2 [f]
      (reify java.util.function.BiConsumer
        (accept [_ r e]
@@ -112,7 +135,8 @@
   (fn [v c]
     (if c (fc c) (fv v))))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn has-method?
      {:no-doc true}
      [klass name]
@@ -121,7 +145,8 @@
                          (.getDeclaredMethods ^Class klass))]
        (contains? methods name))))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn class-exists?
      {:no-doc true}
      [name]
@@ -131,14 +156,16 @@
        (catch ClassNotFoundException _
          false))))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn can-eval?
      {:no-doc true}
      [expr]
      (try (eval expr) true
           (catch Throwable _ false))))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defmacro with-compile-cond
      ([cond then]
       (if (eval cond) then nil))
@@ -155,7 +182,12 @@
 (defn mutex
   {:no-doc true}
   []
-  #?(:clj
+  #?(:cljd
+     (reify
+       pt/ILock
+       (-lock [_])
+       (-unlock [_]))
+     :clj
      (let [m (ReentrantLock.)]
        (reify
          pt/ILock
@@ -171,7 +203,10 @@
 (defn try*
   {:no-doc true}
   [f on-error]
-  (try (f) (catch #?(:clj Throwable :cljs :default) e (on-error e))))
+  (try
+    (f)
+    (catch #?(:cljd dynamic :cljs :default :clj Throwable) e
+      (on-error e))))
 
 ;; http://clj-me.cgrand.net/2013/09/11/macros-closures-and-unexpected-object-retention/
 ;; Explains the use of ^:once metadata
@@ -195,7 +230,8 @@
   [& params]
   (apply close params))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (extend-protocol pt/ICloseable
      java.util.concurrent.ExecutorService
      (-closed? [it]
@@ -232,7 +268,7 @@
          (pos? (count bindings))]}
 
   (when (:ns &env)
-    (throw (ex-info "cljs not supported on with-dispatch! macro" {})))
+    (throw (ex-info "cljs/cljd not supported on with-dispatch! macro" {})))
 
   (reduce (fn [acc bindings]
             `(let ~(vec bindings)

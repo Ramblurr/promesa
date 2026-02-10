@@ -26,3 +26,14 @@
 /settings.xml
 /target
 pom.xml.asc
+.direnv
+
+# ClojureDart / Dart artifacts
+/.clojuredart
+/.dart_tool
+/lib/cljd-out
+/test/cljd-out
+/dart/*
+!/dart/deps.edn
+!/dart/README.md
+

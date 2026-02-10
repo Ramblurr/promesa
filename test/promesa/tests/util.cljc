@@ -1,6 +1,8 @@
 (ns promesa.tests.util
   (:require
    [clojure.test :as t]
+   #?(:cljd [clojure.edn :as edn]
+      :clj [clojure.edn :as edn])
    [promesa.core :as p]
    [promesa.exec :as e]
    #?(:cljs [cljs.reader :refer [read-string]])))
@@ -14,10 +16,12 @@
   [sleep value]
   (p/create (fn [_ reject]
               (let [error #?(:clj (if (instance? Throwable value) value (ex-info (pr-str value) {}))
+                             :cljd (ex-info (pr-str value) {})
                              :cljs (if (instance? js/Error value) value (ex-info (pr-str value) {})))]
                 (e/schedule! sleep #(reject error))))))
 
 (defn normalize-to-value
   [p]
   (p/catch p (fn [exc]
-               (p/resolved (read-string (ex-message exc))))))
+               (p/resolved (#?(:cljs read-string :default edn/read-string)
+                            (ex-message exc))))))

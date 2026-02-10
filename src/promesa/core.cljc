@@ -5,23 +5,25 @@
 ;; Copyright (c) Andrey Antukh <niwi@niwi.nz>
 
 (ns promesa.core
+  {:no-dynamic true}
   (:refer-clojure :exclude [delay spread promise
                             await map mapcat run!
                             future let loop recur
                             -> ->> as-> with-redefs do
                             doseq reduce resolve])
   (:require
-   [clojure.core :as c]
    [promesa.exec :as exec]
    [promesa.impl :as impl]
    [promesa.protocols :as pt]
    [promesa.util :as util])
   #?(:cljs (:require-macros [promesa.core]))
-  #?(:clj
+  #?(:cljd
+     nil
+     :clj
      (:import
       java.util.concurrent.TimeoutException)))
 
-#?(:clj (set! *warn-on-reflection* true))
+#?(:cljd nil :clj (set! *warn-on-reflection* true))
 
 ;; --- Promise
 
@@ -66,20 +68,20 @@
 
   A factory function looks like `(fn [resolve reject] (resolve 1))`."
   ([f]
-   (c/let [d (impl/deferred)]
+   (clojure.core/let [d (impl/deferred)]
      (try
        (f #(pt/-resolve! d %)
           #(pt/-reject! d %))
-       (catch #?(:clj Throwable :cljs :default) e
+       (catch #?(:cljd dynamic :cljs :default :clj Throwable) e
          (pt/-reject! d e)))
      d))
   ([f executor]
-   (c/let [d (impl/deferred)]
+   (clojure.core/let [d (impl/deferred)]
      (exec/run executor (fn []
                           (try
                             (f #(pt/-resolve! d %)
                                #(pt/-reject! d %))
-                            (catch #?(:clj Exception :cljs :default) e
+                            (catch #?(:cljd dynamic :cljs :default :clj Exception) e
                               (pt/-reject! d e)))))
      d)))
 
@@ -218,13 +220,13 @@
   "Chain variable number of functions to be executed serially using
   `then`."
   ([p f] (then p f))
-  ([p f & fs] (c/reduce then p (cons f fs))))
+  ([p f & fs] (clojure.core/reduce then p (cons f fs))))
 
 (defn chain'
   "Chain variable number of functions to be executed serially using
   `map`."
   ([p f] (then' p f))
-  ([p f & fs] (c/reduce #(map %2 %1) (pt/-promise p) (cons f fs))))
+  ([p f & fs] (clojure.core/reduce #(map %2 %1) (pt/-promise p) (cons f fs))))
 
 (defn handle
   "Chains a function `f` to be executed when the promise `p` is completed
@@ -238,17 +240,23 @@
 
   For performance sensitive code, look at `hmap` and `hcat`."
   ([p f]
-   #?(:cljs (c/-> (pt/-promise p)
+   #?(:cljd (clojure.core/-> (pt/-promise p)
                   (pt/-hmap (comp pt/-promise f))
                   (pt/-mcat identity))
-      :clj  (c/-> (pt/-promise p)
+      :cljs (clojure.core/-> (pt/-promise p)
+                  (pt/-hmap (comp pt/-promise f))
+                  (pt/-mcat identity))
+      :clj  (clojure.core/-> (pt/-promise p)
                   (pt/-hmap (comp pt/-promise f))
                   (util/unwrap-completion-stage))))
   ([p f executor]
-   #?(:cljs (c/-> (pt/-promise p)
+   #?(:cljd (clojure.core/-> (pt/-promise p)
                   (pt/-hmap (comp pt/-promise f) executor)
                   (pt/-mcat identity executor))
-      :clj  (c/-> (pt/-promise p)
+      :cljs (clojure.core/-> (pt/-promise p)
+                  (pt/-hmap (comp pt/-promise f) executor)
+                  (pt/-mcat identity executor))
+      :clj  (clojure.core/-> (pt/-promise p)
                   (pt/-hmap (comp pt/-promise f) executor)
                   (util/unwrap-completion-stage)))))
 
@@ -256,10 +264,10 @@
   "Like `handle` but ignores the return value. Returns a promise that
   will mirror the original one."
   ([p f]
-   (c/-> (pt/-promise p)
+   (clojure.core/-> (pt/-promise p)
          (pt/-fnly f)))
   ([p f executor]
-   (c/-> (pt/-promise p)
+   (clojure.core/-> (pt/-promise p)
          (pt/-fnly f executor))))
 
 (defn hmap
@@ -288,17 +296,23 @@
 
   Intended to be used with `->>`."
   ([f p]
-   #?(:cljs (c/-> (pt/-promise p)
+   #?(:cljd (clojure.core/-> (pt/-promise p)
                   (pt/-hmap f)
                   (pt/-mcat identity))
-      :clj  (c/-> (pt/-promise p)
+      :cljs (clojure.core/-> (pt/-promise p)
+                  (pt/-hmap f)
+                  (pt/-mcat identity))
+      :clj  (clojure.core/-> (pt/-promise p)
                   (pt/-hmap f)
                   (util/unwrap-completion-stage))))
   ([executor f p]
-   #?(:cljs (c/-> (pt/-promise p)
+   #?(:cljd (clojure.core/-> (pt/-promise p)
                   (pt/-hmap f executor)
                   (pt/-mcat identity executor))
-      :clj  (c/-> (pt/-promise p)
+      :cljs (clojure.core/-> (pt/-promise p)
+                  (pt/-hmap f executor)
+                  (pt/-mcat identity executor))
+      :clj  (clojure.core/-> (pt/-promise p)
                   (pt/-hmap f executor)
                   (util/unwrap-completion-stage)))))
 
@@ -321,17 +335,28 @@
   `merr` if you want the ability to schedule the computation to other
   thread."
   ([p f]
-   (pt/-merr (pt/-promise p) #(pt/-promise (f %))))
+   (pt/-merr (pt/-promise p) #(impl/coerce (f %))))
   ([p pred-or-type f]
-   (c/let [accept? (if (ifn? pred-or-type)
-                     pred-or-type
-                     #(instance? pred-or-type %))]
-     (pt/-merr
-      (pt/-promise p)
-      (fn [e]
-        (if (accept? e)
-          (pt/-promise (f e))
-          (impl/rejected e)))))))
+   #?(:cljd
+      (clojure.core/let [accept? (if (ifn? pred-or-type)
+                                   pred-or-type
+                                   (fn [_] true))]
+        (pt/-merr
+         (pt/-promise p)
+         (fn [e]
+           (if (accept? e)
+             (impl/coerce (f e))
+             (impl/rejected e)))))
+      :default
+      (clojure.core/let [accept? (if (ifn? pred-or-type)
+                                   pred-or-type
+                                   #(instance? pred-or-type %))]
+        (pt/-merr
+         (pt/-promise p)
+         (fn [e]
+           (if (accept? e)
+             (impl/coerce (f e))
+             (impl/rejected e))))))))
 
 (defn merr
   "Chains a function `f` to be executed when the promise `p` is
@@ -376,14 +401,14 @@
   ([promises]
    (any promises ::default))
   ([promises default]
-   (c/let [items (into #{} promises)
+   (clojure.core/let [items (into #{} promises)
            state (volatile! {:pending items
                              :rejections []
                              :resolved? false})
            lock  (util/mutex)]
      (create
       (fn [resolve reject]
-        (c/doseq [p promises]
+        (clojure.core/doseq [p promises]
           (pt/-fnly
            (pt/-promise p)
            (fn [v exception]
@@ -391,8 +416,8 @@
              (try
                (if exception
                  (when-not (:resolved? @state)
-                   (c/let [state (vswap! state (fn [state]
-                                                 (c/-> state
+                   (clojure.core/let [state (vswap! state (fn [state]
+                                                 (clojure.core/-> state
                                                        (update :pending disj p)
                                                        (update :rejections conj exception))))]
                      (when-not (seq (:pending state))
@@ -402,11 +427,11 @@
                          (resolve default)))))
 
                  (when-not (:resolved? @state)
-                   (c/let [{:keys [pending]} (vswap! state (fn [state]
-                                                             (c/-> state
+                   (clojure.core/let [{:keys [pending]} (vswap! state (fn [state]
+                                                             (clojure.core/-> state
                                                                    (assoc :resolved? true)
                                                                    (update :pending disj p))))]
-                     #?(:clj (c/run! pt/-cancel! pending))
+                     #?(:cljd nil :clj (clojure.core/run! pt/-cancel! pending))
                      (resolve v))))
                (finally
                  (pt/-unlock lock)))))))))))
@@ -427,12 +452,12 @@
 
   Rejected promises also counts as resolved."
   [promises]
-  (c/let [promises (set promises)
+  (clojure.core/let [promises (set promises)
           total    (count promises)
           prom     (deferred)]
     (if (pos? total)
-      (c/let [counter (atom total)]
-        (c/run! #(fnly (fn [_ _]
+      (clojure.core/let [counter (atom total)]
+        (clojure.core/run! #(fnly (fn [_ _]
                          (when (= 0 (swap! counter dec))
                            (pt/-resolve! prom nil)))
                        %)
@@ -446,7 +471,8 @@
   [& promises]
   (wait-all* (vec promises)))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn wait-all!
      "A blocking version of `wait-all`."
      [promises]
@@ -455,17 +481,17 @@
 (defn run
   "A promise aware run! function. Executed in terms of `then` rules."
   ([f coll]
-   (c/-> (c/reduce #(then %1 (fn [_] (f %2))) (impl/resolved nil) coll)
+   (clojure.core/-> (clojure.core/reduce #(then %1 (fn [_] (f %2))) (impl/resolved nil) coll)
          (pt/-fmap (constantly nil))))
   ([f coll executor]
-   (c/-> (c/reduce #(then %1 (fn [_] (f %2)) executor) (impl/resolved nil) coll)
+   (clojure.core/-> (clojure.core/reduce #(then %1 (fn [_] (f %2)) executor) (impl/resolved nil) coll)
          (pt/-fmap (constantly nil)))))
 
 (defn reduce
   "A promise-aware reduce. Allows reduce with potentially asynchrnous
   process over provided initial value and a collection."
   [f init coll]
-  (c/reduce (fn [init item]
+  (clojure.core/reduce (fn [init item]
               (then init (fn [init] (f init item))))
             (resolved init)
             coll))
@@ -476,7 +502,7 @@
 ;;   to calculate the next. Returns a promise resolved with a vector of results
 ;;   or an exception of the first found failed promise."
 ;;   [f coll]
-;;   (c/reduce (fn [init item]
+;;   (clojure.core/reduce (fn [init item]
 ;;               (then (fn [init]
 ;;                       (p/fmap (fn [item]
 ;;                                 (conj init item))
@@ -519,10 +545,10 @@
   [callable]
   (fn [& args]
     (create (fn [resolve reject]
-              (c/let [args (c/-> (vec args) (conj resolve))]
+              (clojure.core/let [args (clojure.core/-> (vec args) (conj resolve))]
                 (try
                   (apply callable args)
-                  (catch #?(:clj Throwable :cljs js/Error) e
+                  (catch #?(:cljd dynamic :cljs js/Error :clj Throwable) e
                     (reject e))))))))
 
 #?(:cljs
@@ -543,10 +569,11 @@
   ([p t] (timeout p t ::default :default))
   ([p t v] (timeout p t v :default))
   ([p t v scheduler]
-   (c/let [timeout (deferred)
+   (clojure.core/let [timeout (deferred)
            tid     (exec/schedule! scheduler t
                                    #(if (= v ::default)
-                                      (reject timeout (TimeoutException. "Operation timed out."))
+                                      (reject timeout #?(:cljd (ex-info "Operation timed out." {})
+                                                         :default (TimeoutException. "Operation timed out.")))
                                       (resolve timeout v)))]
      (race [(fnly (fn [_ _] (pt/-cancel! tid)) p) timeout]))))
 
@@ -557,7 +584,7 @@
   ([t] (delay t nil :default))
   ([t v] (delay t v :default))
   ([t v scheduler]
-   (c/let [d (deferred)]
+   (clojure.core/let [d (deferred)]
      (exec/schedule! scheduler t #(resolve d v))
      d)))
 
@@ -568,7 +595,7 @@
   (condp = (count exprs)
     0 `(impl/resolved nil)
     1 `(impl/coerce ~(first exprs))
-    (c/reduce (fn [acc e]
+    (clojure.core/reduce (fn [acc e]
               `(pt/-mcat (impl/coerce ~e) (fn [_#] ~acc)))
             `(impl/coerce ~(last exprs))
             (reverse (butlast exprs)))))
@@ -587,11 +614,21 @@
   "An exception unsafe let-like macro. Supposes that we are already
   wrapped in promise context so avoids defensive wrapping."
   [bindings & body]
+  (assert (vector? bindings) (str "let* requires vector bindings: " bindings))
   (assert (even? (count bindings)) (str "Uneven binding vector: " bindings))
-  (c/->> (reverse (partition 2 bindings))
-         (c/reduce (fn [acc [l r]]
-                   `(pt/-mcat (impl/coerce ~r) (fn [~l] ~acc)))
-                 `(do* ~@body))))
+  #?(:cljd
+     (clojure.core/let [pairs (partition 2 bindings)
+                        syms  (mapv first pairs)
+                        vals  (mapv second pairs)]
+       `(pt/-mcat
+         (all [~@vals])
+         (fn [[~@syms]]
+           (promesa.core/do* ~@body))))
+     :default
+     (clojure.core/->> (reverse (partition 2 bindings))
+                       (clojure.core/reduce (fn [acc [l r]]
+                                              `(pt/-mcat (impl/coerce ~r) (fn [~l] ~acc)))
+                                            `(do* ~@body)))))
 
 (defmacro let
   "A `let` alternative that always returns promise and waits for all the
@@ -611,9 +648,9 @@
   `(pt/-mcat
     (impl/resolved nil)
     (fn [_#]
-      ~(c/let [bindings (partition 2 bindings)]
-         `(c/-> (all ~(mapv second bindings))
-                (bind (fn [[~@(c/map first bindings)]]
+      ~(clojure.core/let [bindings (partition 2 bindings)]
+         `(clojure.core/-> (all ~(mapv second bindings))
+                (bind (fn [[~@(clojure.core/map first bindings)]]
                         (promesa.core/do* ~@body))))))))
 
 (defn thread-call
@@ -654,13 +691,14 @@
 
 (defn recur?
   [o]
-  (instance? Recur o))
+  #?(:cljd (dart/is? o Recur)
+     :default (instance? Recur o)))
 
 (defmacro loop
   [bindings & body]
-  (c/let [binds (partition 2 2 bindings)
-          names (c/map first binds)
-          fvals (c/map second binds)
+  (clojure.core/let [binds (partition 2 2 bindings)
+          names (clojure.core/map first binds)
+          fvals (clojure.core/map second binds)
           tsym  (gensym "loop-fn-")
           res-s (gensym "res-")
           err-s (gensym "err-")
@@ -668,8 +706,8 @@
           rsv-s (gensym "resolve-fn-")]
     `(create
       (fn [~rsv-s ~rej-s]
-        (c/let [~tsym (fn ~tsym [~@names]
-                        (c/->> (promesa.core/let [~@(c/mapcat (fn [nsym] [nsym nsym]) names)] ~@body)
+        (clojure.core/let [~tsym (fn ~tsym [~@names]
+                        (clojure.core/->> (promesa.core/let [~@(clojure.core/mapcat (fn [nsym] [nsym nsym]) names)] ~@body)
                                (promesa.core/fnly
                                 (fn [~res-s ~err-s]
                                   ;; (prn "result" res# err#)
@@ -707,8 +745,8 @@
   The result of a thread is a promise that will resolve to the
   end of the thread chain."
   [x & forms]
-  (c/let [fns (mapv (fn [arg]
-                      (c/let [[f & args] (if (sequential? arg)
+  (clojure.core/let [fns (mapv (fn [arg]
+                      (clojure.core/let [[f & args] (if (sequential? arg)
                                            arg
                                            (list arg))]
                         `(fn [p#] (~f p# ~@args)))) forms)]
@@ -729,8 +767,8 @@
   The result of a thread is a promise that will resolve to the
   end of the thread chain."
   [x & forms]
-  (c/let [fns (mapv (fn [arg]
-                      (c/let [[f & args] (if (sequential? arg)
+  (clojure.core/let [fns (mapv (fn [arg]
+                      (clojure.core/let [[f & args] (if (sequential? arg)
                                            arg
                                            (list arg))]
                         `(fn [p#] (~f ~@args p#)))) forms)]
@@ -752,22 +790,22 @@
    body and wait until they resolve or reject before restoring the
    bindings. Useful for mocking async APIs."
   [bindings & body]
-  (c/let [names         (take-nth 2 bindings)
+  (clojure.core/let [names         (take-nth 2 bindings)
           vals          (take-nth 2 (drop 1 bindings))
-          orig-val-syms (c/map (comp gensym #(str % "-orig-val__") name) names)
-          temp-val-syms (c/map (comp gensym #(str % "-temp-val__") name) names)
-          binds         (c/map vector names temp-val-syms)
-          resets        (reverse (c/map vector names orig-val-syms))
+          orig-val-syms (clojure.core/map (comp gensym #(str % "-orig-val__") name) names)
+          temp-val-syms (clojure.core/map (comp gensym #(str % "-temp-val__") name) names)
+          binds         (clojure.core/map vector names temp-val-syms)
+          resets        (reverse (clojure.core/map vector names orig-val-syms))
           bind-value    (if (:ns &env)
                           (fn [[k v]] (list 'set! k v))
                           (fn [[k v]] (list 'alter-var-root (list 'var k) (list 'constantly v))))]
-    `(c/let [~@(interleave orig-val-syms names)
+    `(clojure.core/let [~@(interleave orig-val-syms names)
              ~@(interleave temp-val-syms vals)]
-       ~@(c/map bind-value binds)
-       (c/-> (promesa.core/do! ~@body)
+       ~@(clojure.core/map bind-value binds)
+       (clojure.core/-> (promesa.core/do! ~@body)
              (promesa.core/finally
                (fn [_# _#]
-                 ~@(c/map bind-value resets)))))))
+                 ~@(clojure.core/map bind-value resets)))))))
 
 (defmacro doseq
   "Simplified version of `doseq` which takes one binding and a seq, and
@@ -777,7 +815,8 @@
           (promesa.core/do* ~@body))
      ~xs))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn join
      "Block current thread until some operatiomn terminates. The return
   value is implementation specific.
@@ -788,7 +827,8 @@
      ([resource duration-or-ms]
       (pt/-join resource duration-or-ms))))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn await
      "Generic await operation. Block current thread until some operation
   terminates. Returns `nil` on timeout, value if resolves successfully
@@ -835,10 +875,10 @@
   {:deprecated true
    :no-doc true}
   ([f coll]
-   (c/-> (c/reduce #(then %1 (fn [_] (f %2))) (impl/resolved nil) coll)
+   (clojure.core/-> (clojure.core/reduce #(then %1 (fn [_] (f %2))) (impl/resolved nil) coll)
          (pt/-fmap (constantly nil))))
   ([f coll executor]
-   (c/-> (c/reduce #(then %1 (fn [_] (f %2)) executor) (impl/resolved nil) coll)
+   (clojure.core/-> (clojure.core/reduce #(then %1 (fn [_] (f %2)) executor) (impl/resolved nil) coll)
          (pt/-fmap (constantly nil)))))
 
 (defn cancel!
@@ -869,7 +909,8 @@
   [p e]
   (pt/-reject! p e))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defn await!
      "Generic await operation. Block current thread until some operation
   terminates. Returns `nil` on timeout; does not catch any other

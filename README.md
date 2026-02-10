@@ -2,7 +2,7 @@
 
 [![Clojars Project](http://clojars.org/funcool/promesa/latest-version.svg)](http://clojars.org/funcool/promesa)
 
-A promise library & concurrency toolkit for Clojure and ClojureScript.
+A promise library & concurrency toolkit for Clojure, ClojureScript, and ClojureDart.
 
 This library exposes a bunch of useful syntactic abstractions that
 considerably simplify working with promises (in a very similar
@@ -78,5 +78,15 @@ Run the Babashka tests:
 ``` shell
 bb test:bb
 ```
+
+Run the ClojureDart tests (core support, CSP excluded):
+
+``` shell
+cd dart
+clojure -M:cljd init
+clojure -M:cljd:cljd-test test
+```
+
+Note: `dart/` is a runtime workspace for CLJD/Dart generated artifacts and test execution.
 
 [1]: https://funcool.github.io/promesa/latest/

@@ -5,7 +5,8 @@
 ;; Copyright (c) Andrey Antukh <niwi@niwi.nz>
 
 (ns promesa.protocols
-  "A generic promise abstraction and related protocols.")
+  "A generic promise abstraction and related protocols."
+  {:no-dynamic true})
 
 (defprotocol IPromise
   (-fmap [it f] [it f executor]
@@ -58,11 +59,13 @@
   "A generic abstraction for scheduler facilities."
   (-schedule! [it ms func] "Schedule a function to be executed in future."))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defprotocol IJoinable
      (-join [it] [it duration-or-ms] "block current thread await termination")))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    (defprotocol IInvoke
      (-invoke [it f] [it f duration-or-ms] "Call a function f in a context with optional timeout")))
 
@@ -112,7 +115,8 @@
   (^:no-doc -commit [it])
   (^:no-doc -blockable? [it]))
 
-#?(:clj
+#?(:cljd nil
+   :clj
    ;; DEPRECATED
    (defprotocol IAwaitable
      (-await! [it] [it duration] "block current thread await termination")))
